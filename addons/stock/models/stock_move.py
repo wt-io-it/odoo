@@ -160,6 +160,26 @@ class StockMove(models.Model):
     reference = fields.Char(compute='_compute_reference', string="Reference", store=True)
     has_move_lines = fields.Boolean(compute='_compute_has_move_lines')
 
+    def _get_move_equilibrium(self):
+        negative_allowed = False
+        # Take care that there will be no negative initial demand
+        pending_moves = self.filtered(lambda r: r.state not in ['done', 'cancel'])
+        done_moves = self.filtered(lambda r: r.state == 'done')
+        returned_moves = done_moves.mapped('returned_move_ids')
+        delivered_moves = done_moves - returned_moves
+        
+        involved_moves = pending_moves + done_moves + returned_moves + delivered_moves
+        # In case of any state where we have no stock moves which need to be adapted
+        if not involved_moves:
+            negative_allowed = True
+        move_equilibrium = (
+            sum(delivered_moves.mapped('move_line_ids').mapped('qty_done')) - 
+            sum(returned_moves.mapped('move_line_ids').mapped('qty_done')) + 
+            sum(pending_moves.mapped('product_uom_qty'))
+        )
+
+        return move_equilibrium, negative_allowed
+
     @api.depends('picking_id.is_locked')
     def _compute_is_locked(self):
         for move in self:

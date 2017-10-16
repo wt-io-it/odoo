@@ -101,14 +101,23 @@ class SaleOrderLine(models.Model):
     def write(self, values):
         lines = False
         if 'product_uom_qty' in values:
-            precision = self.env['decimal.precision'].precision_get('Product Unit of Measure')
-            lines = self.filtered(
-                lambda r: r.state == 'sale' and float_compare(r.product_uom_qty, values['product_uom_qty'], precision_digits=precision) == -1)
+            self.ensure_one()
+            lines = self._get_procurement_lines(values)
+
         res = super(SaleOrderLine, self).write(values)
         if lines:
             lines._action_launch_procurement_rule()
         return res
     
+
+    def _get_procurement_lines(self, values):
+        lines = False
+        moves = self.mapped('move_ids')
+        move_equilibrium, negative_allowed = moves._get_move_equilibrium()
+        diff_qty = values['product_uom_qty'] - self.product_uom_qty
+        if move_equilibrium + diff_qty >= 0 or negative_allowed:
+            lines = self.filtered(lambda r: r.state == 'sale')
+        return lines
 
     @api.depends('order_id.state')
     def _compute_invoice_status(self):
@@ -234,10 +243,13 @@ class SaleOrderLine(models.Model):
             if line.state != 'sale' or not line.product_id.type in ('consu','product'):
                 continue
             qty = 0.0
-            for move in line.move_ids.filtered(lambda r: r.state != 'cancel'):
+            moves = line.move_ids.filtered(lambda r: r.state != 'cancel')
+            returned_moves = moves.mapped('returned_move_ids')
+            delivered_moves = moves - returned_moves
+            for move in delivered_moves:
                 qty += move.product_uom._compute_quantity(move.product_uom_qty, line.product_uom, rounding_method='HALF-UP')
-            if float_compare(qty, line.product_uom_qty, precision_digits=precision) >= 0:
-                continue
+            for move in returned_moves:
+                qty -= move.product_uom._compute_quantity(move.product_uom_qty, line.product_uom, rounding_method='HALF-UP')
 
             group_id = line.order_id.procurement_group_id
             if not group_id:
