@@ -595,7 +595,13 @@ class StockMove(models.Model):
             moves_to_unlink.write({'propagate': False})
             moves_to_unlink._action_cancel()
             moves_to_unlink.unlink()
-        return (self | self.env['stock.move'].concat(*moves_to_merge)) - moves_to_unlink
+        moves_cleaned = (self | self.env['stock.move'].concat(*moves_to_merge)) - moves_to_unlink
+        if moves_cleaned.filtered(lambda move: move.product_uom_qty < 0):
+            raise UserError(
+                'You can not change a quantity which results in a negative initial demand based on your configuration!\n\n'
+                'It was most likely that the merging was not possible due to different characteristic of the stock move fields %s' % (', '.join(self._prepare_merge_moves_distinct_fields()))
+            )
+        return moves_cleaned
 
     def _get_relevant_state_among_moves(self):
         # We sort our moves by importance of state:

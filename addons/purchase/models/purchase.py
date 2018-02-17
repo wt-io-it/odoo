@@ -12,6 +12,10 @@ from odoo.tools.misc import formatLang
 from odoo.addons.base.res.res_partner import WARNING_MESSAGE, WARNING_HELP
 from odoo.addons import decimal_precision as dp
 
+import logging
+
+_logger = logging.getLogger(__name__)
+
 
 class PurchaseOrder(models.Model):
     _name = "purchase.order"
@@ -663,13 +667,23 @@ class PurchaseOrderLine(models.Model):
                     activity._onchange_activity_type_id()
 
                 # If the user increased quantity of existing line or created a new line
-                pickings = line.order_id.picking_ids.filtered(lambda x: x.state not in ('done', 'cancel') and x.location_dest_id.usage in ('internal', 'transit'))
+                pickings = line.order_id.picking_ids.filtered(lambda x: x.state not in ('done', 'cancel') and x.location_dest_id.usage in ('internal', 'transit', 'customer'))
                 picking = pickings and pickings[0] or False
                 if not picking:
                     res = line.order_id._prepare_picking()
                     picking = self.env['stock.picking'].create(res)
                 move_vals = line._prepare_stock_moves(picking)
                 for move_val in move_vals:
+
+                    qty = move_val.get('product_uom_qty')
+                    test = self.env['stock.move'].new(move_val)
+                    _logger.info('Before: Qty: %s | Price Unit: %s', test.product_uom_qty, move_val['price_unit'])
+                    if qty and qty < 0:
+                        same_product = picking.move_lines.filtered(lambda move: move.product_id == test.product_id)
+                        if test.price_unit not in same_product.mapped('price_unit'):
+                            move_val['price_unit'] = same_product.price_unit
+                    _logger.info('After: Qty: %s | Price Unit: %s', test.product_uom_qty, move_val['price_unit'])
+
                     self.env['stock.move']\
                         .create(move_val)\
                         ._action_confirm()\
